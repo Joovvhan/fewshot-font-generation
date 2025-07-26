@@ -15,16 +15,17 @@ def main():
     print(root_dir)
     ttffiles = sorted(Path(root_dir).rglob("*.ttf"))
 
-    for ttffile in tqdm(ttffiles):
+    # for ttffile in tqdm(ttffiles):
+    for ttffile in tqdm(ttffiles, desc="Font files", position=0):
         txtfile = Path(str(ttffile).replace(".ttf", ".txt"))
         if txtfile.is_file():
             continue
         try:
             avail_chars = get_filtered_chars(ttffile)
-            with open(txtfile, "w") as f:
+            with open(txtfile, "w", encoding='utf-8') as f:
                 f.write("".join(avail_chars))
-        except:
-            print(ttffile)
+        except Exception as e:
+            tqdm.write(f"Error processing {ttffile}: {e}")
 
 
 if __name__ == "__main__":

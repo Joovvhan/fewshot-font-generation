@@ -7,6 +7,7 @@ from fontTools.ttLib import TTFont
 from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 
+from tqdm.auto import tqdm
 
 def get_defined_chars(fontfile):
     ttf = TTFont(fontfile)
@@ -19,7 +20,9 @@ def get_filtered_chars(fontpath):
     defined_chars = get_defined_chars(fontpath)
     avail_chars = []
 
-    for char in defined_chars:
+    # for char in defined_chars:
+    for char in tqdm(defined_chars, desc=f"Chars in {fontpath.name}", position=1, leave=False):
+
         img = np.array(render(ttf, char))
         if img.mean() == 255.:
             pass
