@@ -117,6 +117,12 @@ Please refer following documents to train the model:
 
 Detailed instructions for preparing evaluator and testing the generated images are decribed in [here](docs/Evaluation.md).
 
+
+## Training
+
+python train_MX.py cfgs/MX/train.yaml cfgs/data/train/custom.yaml
+
+
 ## License
 
 This project is distributed under [MIT license](LICENSE), except [FUNIT](FUNIT) and [base/modules/modules.py](base/modules/modules.py) which is adopted from https://github.com/NVlabs/FUNIT.

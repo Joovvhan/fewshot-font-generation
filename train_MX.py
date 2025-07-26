@@ -32,6 +32,11 @@ TRANSFORM = transforms.Compose([
     transforms.Normalize([0.5], [0.5])
 ])
 
+def count_params(model):
+    return sum(p.numel() for p in model.parameters())
+
+def sizeof_params(model):
+    return count_params(model) * 4 / (1024**2)
 
 def setup_train_dset(cfg):
     decomposition = load_decomposition(cfg.decomposition)
@@ -124,15 +129,21 @@ def build_trainer(args, cfg, gpu=0):
     gen.cuda()
     gen.apply(weights_init("kaiming"))
 
+    logger.info(f"Generator parameters: {count_params(gen):,} (~{sizeof_params(gen):.2f} MB)")
+
     disc = Discriminator(trn_dset.n_fonts, trn_dset.n_chars)
     disc.cuda()
     disc.apply(weights_init("kaiming"))
+
+    logger.info(f"Discriminator parameters: {count_params(disc):,} (~{sizeof_params(disc):.2f} MB)")
 
     aux_clf = AuxClassifier(in_shape=gen.feat_shape["last"],
                             num_c=cfg.n_primals,
                             num_s=trn_dset.n_fonts)
     aux_clf.cuda()
     aux_clf.apply(weights_init("kaiming"))
+
+    logger.info(f"AuxClassifier parameters: {count_params(aux_clf):,} (~{sizeof_params(aux_clf):.2f} MB)")
 
     g_optim = optim.Adam(gen.parameters(), lr=cfg.g_lr, betas=cfg.adam_betas)
     d_optim = optim.Adam(disc.parameters(), lr=cfg.d_lr, betas=cfg.adam_betas)
@@ -185,6 +196,9 @@ def main():
 
     cfg = setup_train_config(args, left_argv)
     cfg = setup_train_dset(cfg)
+
+    # print(cfg)
+    # 'dset': {'loader': {'batch_size': 8, 'num_workers': 16}
 
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)

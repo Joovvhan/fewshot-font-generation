@@ -14,6 +14,7 @@ import base.utils as utils
 
 from .hsic import RbfHSIC
 
+from tqdm.auto import tqdm
 
 def to_batch(batch):
     in_batch = {
@@ -31,6 +32,8 @@ class MXTrainer(BaseTrainer):
         self.to_batch = to_batch
 
     def train(self, loader, val_loaders, max_step=100000):
+
+        torch.autograd.set_detect_anomaly(True)
 
         self.gen.train()
         if self.disc is not None:
@@ -51,22 +54,30 @@ class MXTrainer(BaseTrainer):
 
         self.logger.info("Start training ...")
 
+        print("Before for loop")
+
+        pbar = tqdm(total=max_step, desc="Training", dynamic_ncols=True)
+
         for batch in cyclize(loader):
+            print(f"[Step {self.step}] Got batch, keys:", batch.keys())
+
             epoch = self.step // len(loader)
+
             if self.use_ddp and (self.step % len(loader)) == 0:
                 loader.sampler.set_epoch(epoch)
 
+            print(f"[Step {self.step}] Before cuda calls")
             style_imgs = batch["style_imgs"].cuda()
             style_fids = batch["style_fids"].cuda()
             style_decs = batch["style_decs"]
             char_imgs = batch["char_imgs"].cuda()
             char_fids = batch["char_fids"].cuda()
             char_decs = batch["char_decs"]
-
             trg_imgs = batch["trg_imgs"].cuda()
             trg_fids = batch["trg_fids"].cuda()
             trg_cids = batch["trg_cids"].cuda()
             trg_decs = batch["trg_decs"]
+            print(f"[Step {self.step}] After cuda calls")
 
             ##############################################################
             # infer
@@ -76,35 +87,47 @@ class MXTrainer(BaseTrainer):
             n_s = style_imgs.shape[1]
             n_c = char_imgs.shape[1]
 
+            print(f"[Step {self.step}] Before style_feats encode")
             style_feats = self.gen.encode(style_imgs.flatten(0, 1))  # (B*n_s, n_exp, *feat_shape)
+            print(f"[Step {self.step}] After style_feats encode")
+
+            print(f"[Step {self.step}] Before char_feats encode")
             char_feats = self.gen.encode(char_imgs.flatten(0, 1))
+            print(f"[Step {self.step}] After char_feats encode")
 
             self.add_indp_exp_loss(torch.cat([style_feats["last"], char_feats["last"]]))
 
+            print(f"[Step {self.step}] Before factorize")
             style_facts_s = self.gen.factorize(style_feats, 0)  # (B*n_s, n_exp, *feat_shape)
             style_facts_c = self.gen.factorize(style_feats, 1)
             char_facts_s = self.gen.factorize(char_feats, 0)
             char_facts_c = self.gen.factorize(char_feats, 1)
+            print(f"[Step {self.step}] After factorize")
 
             self.add_indp_fact_loss(
                 [style_facts_s["last"], style_facts_c["last"]],
                 [style_facts_s["skip"], style_facts_c["skip"]],
                 [char_facts_s["last"], char_facts_c["last"]],
                 [char_facts_s["skip"], char_facts_c["skip"]],
-                                  )
+            )
 
             mean_style_facts = {k: utils.add_dim_and_reshape(v, 0, (-1, n_s)).mean(1) for k, v in style_facts_s.items()}
             mean_char_facts = {k: utils.add_dim_and_reshape(v, 0, (-1, n_c)).mean(1) for k, v in char_facts_c.items()}
             gen_feats = self.gen.defactorize(mean_style_facts, mean_char_facts)
+
+            print(f"[Step {self.step}] Before gen.decode")
             gen_imgs = self.gen.decode(gen_feats)
+            print(f"[Step {self.step}] After gen.decode")
 
             stats.updates({
                 "B": B,
             })
 
+            print(f"[Step {self.step}] Before disc real forward")
             real_font, real_uni, *real_feats = self.disc(
                 trg_imgs, trg_fids, trg_cids, out_feats=self.cfg['fm_layers']
             )
+            print(f"[Step {self.step}] After disc real forward")
 
             fake_font, fake_uni = self.disc(gen_imgs.detach(), trg_fids, trg_cids)
             self.add_gan_d_loss([real_font, real_uni], [fake_font, fake_uni])
@@ -112,19 +135,25 @@ class MXTrainer(BaseTrainer):
             self.d_optim.zero_grad()
             self.d_backward()
             self.d_optim.step()
+            print(f"[Step {self.step}] After discriminator backward and step")
+
+            # print(torch.cuda.memory_summary())
 
             fake_font, fake_uni, *fake_feats = self.disc(
                 gen_imgs, trg_fids, trg_cids, out_feats=self.cfg['fm_layers']
             )
+
+            # fake_font, fake_uni, *fake_feats = self.disc(
+            #     gen_imgs, trg_fids, trg_cids, out_feats='none'
+            # )
+
+            print(f"[Step {self.step}] After disc forward (fake)")
+
             self.add_gan_g_loss(fake_font, fake_uni)
+            print(f"[Step {self.step}] After add_gan_g_loss")
 
             self.add_fm_loss(real_feats, fake_feats)
-
-            def racc(x):
-                return (x > 0.).float().mean().item()
-
-            def facc(x):
-                return (x < 0.).float().mean().item()
+            print(f"[Step {self.step}] After add_fm_loss")
 
             discs.updates({
                 "real_font": real_font.mean().item(),
@@ -132,15 +161,18 @@ class MXTrainer(BaseTrainer):
                 "fake_font": fake_font.mean().item(),
                 "fake_uni": fake_uni.mean().item(),
 
-                'real_font_acc': racc(real_font),
-                'real_uni_acc': racc(real_uni),
-                'fake_font_acc': facc(fake_font),
-                'fake_uni_acc': facc(fake_uni)
+                'real_font_acc': (real_font > 0.).float().mean().item(),
+                'real_uni_acc': (real_uni > 0.).float().mean().item(),
+                'fake_font_acc': (fake_font < 0.).float().mean().item(),
+                'fake_uni_acc': (fake_uni < 0.).float().mean().item()
             }, B)
+            print(f"[Step {self.step}] After discs updates")
 
             self.add_pixel_loss(gen_imgs, trg_imgs)
+            print(f"[Step {self.step}] After add_pixel_loss")
 
             self.g_optim.zero_grad()
+            print(f"[Step {self.step}] After g_optim.zero_grad()")
 
             self.add_ac_losses_and_update_stats(
                 torch.cat([style_facts_s["last"], char_facts_s["last"]]),
@@ -152,12 +184,22 @@ class MXTrainer(BaseTrainer):
                 trg_decs,
                 stats
             )
+            print(f"[Step {self.step}] After add_ac_losses_and_update_stats")
+
             self.ac_optim.zero_grad()
+            print(f"[Step {self.step}] After ac_optim.zero_grad()")
+
             self.ac_backward()
+            print(f"[Step {self.step}] After ac_backward()")
+
             self.ac_optim.step()
+            print(f"[Step {self.step}] After ac_optim.step()")
 
             self.g_backward()
+            print(f"[Step {self.step}] After g_backward()")
+
             self.g_optim.step()
+            print(f"[Step {self.step}] After g_optim.step()")
 
             loss_dic = self.clear_losses()
             losses.updates(loss_dic, B)  # accum loss stats
@@ -176,19 +218,20 @@ class MXTrainer(BaseTrainer):
                 if self.step % self.cfg.print_freq == 0:
                     self.log(losses, discs, stats)
                     self.logger.debug("GPU Memory usage: max mem_alloc = %.1fM / %.1fM",
-                                      torch.cuda.max_memory_allocated() / 1000 / 1000,
-                                      torch.cuda.max_memory_cached() / 1000 / 1000)
+                                    torch.cuda.max_memory_allocated() / 1000 / 1000,
+                                    torch.cuda.max_memory_cached() / 1000 / 1000)
                     losses.resets()
                     discs.resets()
                     stats.resets()
 
                     nrow = len(trg_imgs)
                     grid = utils.make_comparable_grid(*style_imgs.transpose(0, 1).detach().cpu(),
-                                                      *char_imgs.transpose(0, 1).detach().cpu(),
-                                                      trg_imgs.detach().cpu(),
-                                                      gen_imgs.detach().cpu(),
-                                                      nrow=nrow)
+                                                    *char_imgs.transpose(0, 1).detach().cpu(),
+                                                    trg_imgs.detach().cpu(),
+                                                    gen_imgs.detach().cpu(),
+                                                    nrow=nrow)
                     self.writer.add_image("last", grid)
+                    print(f"[Step {self.step}] Logged images to TensorBoard")
 
                 if self.step > 0 and self.step % self.cfg.val_freq == 0:
                     epoch = self.step / len(loader)
@@ -200,17 +243,18 @@ class MXTrainer(BaseTrainer):
                     for _key, _loader in val_loaders.items():
                         n_row = _loader.dataset.n_gen
                         self.infer_save_img(_loader, tag=_key, n_row=n_row)
-
                     self.save(self.cfg.save, self.cfg.get('save_freq', self.cfg.val_freq))
-            else:
-                pass
+                    print(f"[Step {self.step}] Validation and model saved")
 
+            pbar.update(1)
             if self.step >= max_step:
                 break
 
             self.step += 1
 
+
         self.logger.info("Iteration finished.")
+        pbar.close()
 
     def add_indp_exp_loss(self, exps):
         exps = [F.adaptive_avg_pool2d(exps[:, i], 1).squeeze() for i in range(exps.shape[1])]
@@ -252,6 +296,11 @@ class MXTrainer(BaseTrainer):
             _prob = nn.Softmax(dim=-1)(_logit)  # (n_exp, n_comp)
             T_probs = _prob.T[_b_comp_id].detach().cpu()  # (n_T, n_exp)
             cids, eids = expert_assign(T_probs)
+
+            # From cpu to gpu
+            cids = cids.to(T_probs.device)
+            eids = eids.to(T_probs.device)
+
             _max_ids = torch.where(_b_comp_id)[0][cids]
             ac_loss_c += F.cross_entropy(_logit[eids], _max_ids)
             acc = T_probs[cids, eids].sum() / n_experts
