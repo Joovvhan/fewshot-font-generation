@@ -59,7 +59,7 @@ class MXTrainer(BaseTrainer):
         pbar = tqdm(total=max_step, desc="Training", dynamic_ncols=True)
 
         for batch in cyclize(loader):
-            print(f"[Step {self.step}] Got batch, keys:", batch.keys())
+            # print(f"[Step {self.step}] Got batch, keys:", batch.keys())
 
             epoch = self.step // len(loader)
 
