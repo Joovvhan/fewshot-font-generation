@@ -1,3 +1,4 @@
+Pillow==9.5.0
 tqdm
 jsonlib-python3
 msgpack>=1.0.0
@@ -10,6 +11,3 @@ lpips
 tensorboardX
 tensorboard
 six
-torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
-torchvision==0.14.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
-torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117

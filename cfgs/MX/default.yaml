@@ -39,7 +39,7 @@ gen:
   
 dset:
   loader:
-    batch_size: 2
+    batch_size: 8
     num_workers: 1
   train:
     n_in_s: 3
